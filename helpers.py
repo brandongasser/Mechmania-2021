@@ -31,6 +31,8 @@ def can_harvest_or_plant(game_state: GameState, my_player: Player, tile_pos: Pos
 def find_next_pos(my_player: Player, target_position: Position):
     y_error = clamp(target_position.y - my_player.position.y, -my_player.max_movement, my_player.max_movement)
     x_error = clamp(target_position.x - my_player.position.x, -my_player.max_movement + abs(y_error), my_player.max_movement - abs(y_error))
+    if not game_util.valid_position(Position(my_player.position.x + x_error, my_player.position.y + y_error)):
+        return my_player.position
     return Position(my_player.position.x + x_error, my_player.position.y + y_error)
 
 def is_carrying_crop(my_player: Player, crop_type: CropType):
@@ -46,7 +48,8 @@ def get_plant_tiles(my_player: Player):
     positions = []
     for x in range(my_player.position.x - my_player.plant_radius, my_player.position.x + my_player.plant_radius):
         for y in range(my_player.position.y - my_player.plant_radius, my_player.position.y + my_player.plant_radius):
-            positions.append(Position(x, y))
+            position = Position(x, y)
+            positions.append(position)
     
     for position in positions:
         if not game_util.valid_position(position):
@@ -58,7 +61,8 @@ def get_harvest_tiles(my_player: Player):
     positions = []
     for x in range(my_player.position.x - my_player.harvest_radius, my_player.position.x + my_player.harvest_radius):
         for y in range(my_player.position.y - my_player.harvest_radius, my_player.position.y + my_player.harvest_radius):
-            positions.append(Position(x, y))
+            position = Position(x, y)
+            positions.append(position)
     
     for position in positions:
         if not game_util.valid_position(position):
