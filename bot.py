@@ -1,3 +1,4 @@
+from model.decisions import do_nothing_decision
 from networking.io import Logger
 from game import Game
 from api import game_util
@@ -21,6 +22,45 @@ import random
 logger = Logger()
 constants = Constants()
 
+GREEN_GROCER_POS = Position((constants.BOARD_WIDTH // 2), 0)
+
+def can_harvest(game_state: GameState, pos: Position, my_player_number: int):
+    scarecrow_effect = game_state.tile_map.get_tile(pos.x, pos.y).scarecrow_effect
+    return not (scarecrow_effect == 2 or (scarecrow_effect == 1 and my_player_number == 0 or scarecrow_effect == 0 and my_player_number == 1))
+
+def find_harvest_positions(my_player: Player):
+    harvest_positions = []
+    for x in range((my_player.position.x - my_player.harvest_radius), (my_player.position.x + my_player.harvest_radius)):
+        for y in range((my_player.position.y - my_player.harvest_radius), (my_player.position.y + my_player.harvest_radius)):
+            harvest_positions.append(Position(x, y))
+    return harvest_positions
+
+def find_next_pos(my_pos: Position, target_pos: Position):
+    if (my_pos.x == target_pos.x and my_pos.y == target_pos.y):
+        return target_pos
+    if (game_util.distance(my_pos, target_pos) <= 10):
+        return target_pos
+    else:
+        if (my_pos.y > target_pos.y):
+            if (my_pos.y - target_pos.y <= 10):
+                return Position(my_pos.x, target_pos.y)
+            else:
+                return Position(my_pos.x, (my_pos.y - 10))
+        elif (my_pos.y < target_pos.y):
+            if (target_pos.y - my_pos.y <= 10):
+                return Position(my_pos.x, target_pos.y)
+            else:
+                return Position(my_pos.x, (my_pos.y + 10))
+        elif (my_pos.x > target_pos.x):
+            if (my_pos.x - target_pos.x <= 10):
+                return Position(target_pos.x, my_pos.y)
+            else:
+                return Position((my_pos.x - 10), my_pos.y)
+        elif (my_pos.x < target_pos.x):
+            if (target_pos.x - my_pos.x <= 10):
+                return Position(target_pos.x, my_pos.y)
+            else:
+                return Position((my_pos + 10), my_pos.y)
 
 def get_move_decision(game: Game) -> MoveDecision:
     """
@@ -41,20 +81,34 @@ def get_move_decision(game: Game) -> MoveDecision:
 
     # Select your decision here!
     my_player: Player = game_state.get_my_player()
+    my_player_number = 0
+    if (my_player.name == game_state.player1.name):
+        my_player_number = 0
+    else:
+        my_player_number = 1
+    opponent_player: Player = game_state.get_opponent_player()
     pos: Position = my_player.position
     logger.info(f"Currently at {my_player.position}")
 
-    # If we have something to sell that we harvested, then try to move towards the green grocer tiles
-    if random.random() < 0.5 and \
-            (sum(my_player.seed_inventory.values()) == 0 or
-             len(my_player.harvested_inventory)):
-        logger.debug("Moving towards green grocer")
-        decision = MoveDecision(Position(constants.BOARD_WIDTH // 2, max(0, pos.y - constants.MAX_MOVEMENT)))
-    # If not, then move randomly within the range of locations we can move to
+    decision = DoNothingDecision()
+
+    if my_player.harvested_inventory.__contains__(CropType.GRAPE):
+        decision = MoveDecision(find_next_pos(pos, GREEN_GROCER_POS))
     else:
-        pos = random.choice(game_util.within_move_range(game_state, my_player.name))
-        logger.debug("Moving randomly")
-        decision = MoveDecision(pos)
+        grape_tiles = []
+        for x in range(constants.BOARD_WIDTH):
+            for y in range(constants.BOARD_HEIGHT):
+                if game_state.tile_map.get_tile(x, y).crop == CropType.GRAPE:
+                    grape_tiles.append(Position(x, y))
+
+        best_pos = pos
+        for grape_pos in grape_tiles:
+            if best_pos == pos and can_harvest(game_state, grape_pos, my_player_number):
+                best_pos = grape_pos
+            if game_util.distance(pos, grape_pos) < game_util.distance(pos, best_pos) and can_harvest(game_state, grape_pos, my_player_number):
+                best_pos = grape_pos
+
+        decision = MoveDecision(find_next_pos(pos, best_pos))
 
     logger.debug(f"[Turn {game_state.turn}] Sending MoveDecision: {decision}")
     return decision
@@ -80,37 +134,8 @@ def get_action_decision(game: Game) -> ActionDecision:
     my_player: Player = game_state.get_my_player()
     pos: Position = my_player.position
     # Let the crop of focus be the one we have a seed for, if not just choose a random crop
-    crop = max(my_player.seed_inventory, key=my_player.seed_inventory.get) \
-        if sum(my_player.seed_inventory.values()) > 0 else random.choice(list(CropType))
 
-    # Get a list of possible harvest locations for our harvest radius
-    possible_harvest_locations = []
-    harvest_radius = my_player.harvest_radius
-    for harvest_pos in game_util.within_harvest_range(game_state, my_player.name):
-        if game_state.tile_map.get_tile(harvest_pos.x, harvest_pos.y).crop.value > 0:
-            possible_harvest_locations.append(harvest_pos)
-
-    logger.debug(f"Possible harvest locations={possible_harvest_locations}")
-
-    # If we can harvest something, try to harvest it
-    if len(possible_harvest_locations) > 0:
-        decision = HarvestDecision(possible_harvest_locations)
-    # If not but we have that seed, then try to plant it in a fertility band
-    elif my_player.seed_inventory[crop] > 0 and \
-            game_state.tile_map.get_tile(pos.x, pos.y).type != TileType.GREEN_GROCER and \
-            game_state.tile_map.get_tile(pos.x, pos.y).type.value >= TileType.F_BAND_OUTER.value:
-        logger.debug(f"Deciding to try to plant at position {pos}")
-        decision = PlantDecision([crop], [pos])
-    # If we don't have that seed, but we have the money to buy it, then move towards the
-    # green grocer to buy it
-    elif my_player.money >= crop.get_seed_price() and \
-        game_state.tile_map.get_tile(pos.x, pos.y).type == TileType.GREEN_GROCER:
-        logger.debug(f"Buy 1 of {crop}")
-        decision = BuyDecision([crop], [1])
-    # If we can't do any of that, then just do nothing (move around some more)
-    else:
-        logger.debug(f"Couldn't find anything to do, waiting for move step")
-        decision = DoNothingDecision()
+    decision = HarvestDecision(find_harvest_positions(my_player))
 
     logger.debug(f"[Turn {game_state.turn}] Sending ActionDecision: {decision}")
     return decision
